@@ -1,5 +1,6 @@
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { AppTopbar } from "@/components/layout/app-topbar";
+import { Footer } from "@/components/layout/footer";
 import { requireSession } from "@/lib/session";
 
 type AppUser = {
@@ -27,6 +28,7 @@ export default async function AppLayout({ children }: Readonly<{ children: React
       <div className="flex min-w-0 flex-1 flex-col">
         <AppTopbar user={{ name: user.name, email: user.email }} />
         {children}
+        <Footer />
       </div>
     </div>
   );
