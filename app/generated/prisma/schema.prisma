@@ -1,0 +1,363 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  MASTER_ADMIN
+  SUB_ADMIN
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  SUSPENDED
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ProjectStatus {
+  DRAFT
+  ASSIGNED
+  PRINTING
+  PAUSED
+  QUALITY_CHECK
+  READY_FOR_PICKUP
+  DELIVERED
+  COMPLETED
+  CANCELLED
+}
+
+enum PrinterStatus {
+  AVAILABLE
+  BUSY
+  OFFLINE
+  MAINTENANCE
+}
+
+enum FileKind {
+  FOLDER
+  STL
+  OBJ
+  GLB
+  GLTF
+  PDF
+  ZIP
+  IMAGE
+  OTHER
+}
+
+enum ProductionEventType {
+  STARTED
+  PAUSED
+  RESUMED
+  FINISHED
+  QUANTITY_UPDATED
+  NOTE_ADDED
+  IMAGE_UPLOADED
+}
+
+enum NotificationChannel {
+  EMAIL
+  WHATSAPP
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum StorageProvider {
+  LOCAL
+  R2
+  SUPABASE
+}
+
+enum BackupStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id            String     @id @default(cuid())
+  name          String
+  email         String     @unique
+  emailVerified Boolean    @default(false)
+  image         String?
+  role          UserRole   @default(EMPLOYEE)
+  status        UserStatus @default(INVITED)
+  phone         String?
+  deletedAt     DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  createdById   String?
+  updatedById   String?
+
+  accounts           Account[]
+  sessions           Session[]
+  createdBy          User?             @relation("UserCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  createdUsers       User[]            @relation("UserCreatedBy")
+  updatedBy          User?             @relation("UserUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  updatedUsers       User[]            @relation("UserUpdatedBy")
+  assignedProjects   Project[]         @relation("AssignedEmployee")
+  createdProjects    Project[]         @relation("ProjectCreatedBy")
+  updatedProjects    Project[]         @relation("ProjectUpdatedBy")
+  currentPrinterJobs Printer[]         @relation("CurrentEmployee")
+  productionEvents   ProductionEvent[]
+  notifications      Notification[]
+  activityLogs       ActivityLog[]
+  uploadedFiles      ProjectFile[]     @relation("UploadedBy")
+
+  @@index([role, status])
+  @@index([deletedAt])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([providerId, accountId])
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model Customer {
+  id          String    @id @default(cuid())
+  name        String
+  company     String?
+  email       String?
+  phone       String?
+  whatsapp    String?
+  address     String?
+  notes       String?
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdById String?
+  updatedById String?
+
+  projects Project[]
+
+  @@index([name])
+  @@index([deletedAt])
+}
+
+model Printer {
+  id                String        @id @default(cuid())
+  name              String
+  model             String
+  status            PrinterStatus @default(AVAILABLE)
+  serialNumber      String?
+  buildVolume       String?
+  currentProjectId  String?
+  currentEmployeeId String?
+  deletedAt         DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  currentProject  Project?  @relation("CurrentPrinterProject", fields: [currentProjectId], references: [id], onDelete: SetNull)
+  currentEmployee User?     @relation("CurrentEmployee", fields: [currentEmployeeId], references: [id], onDelete: SetNull)
+  projects        Project[] @relation("AssignedPrinter")
+
+  @@index([status])
+  @@index([deletedAt])
+}
+
+model Project {
+  id                  String        @id @default(cuid())
+  name                String
+  description         String?
+  priority            Priority      @default(MEDIUM)
+  status              ProjectStatus @default(DRAFT)
+  quantity            Int
+  printedQuantity     Int           @default(0)
+  material            String
+  color               String?
+  deliveryDate        DateTime
+  startDate           DateTime?
+  estimatedPrintTime  Int?
+  actualPrintTime     Int?
+  notes               String?
+  customerId          String
+  assignedEmployeeId  String?
+  assignedPrinterId   String?
+  createdById         String?
+  updatedById         String?
+  deletionScheduledAt DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  customer         Customer          @relation(fields: [customerId], references: [id], onDelete: Restrict)
+  assignedEmployee User?             @relation("AssignedEmployee", fields: [assignedEmployeeId], references: [id], onDelete: SetNull)
+  assignedPrinter  Printer?          @relation("AssignedPrinter", fields: [assignedPrinterId], references: [id], onDelete: SetNull)
+  createdBy        User?             @relation("ProjectCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  updatedBy        User?             @relation("ProjectUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+  activeOnPrinters Printer[]         @relation("CurrentPrinterProject")
+  files            ProjectFile[]
+  productionEvents ProductionEvent[]
+  notifications    Notification[]
+
+  @@index([status, priority])
+  @@index([deliveryDate])
+  @@index([deletedAt])
+}
+
+model ProjectFile {
+  id                  String          @id @default(cuid())
+  name                String
+  kind                FileKind
+  mimeType            String?
+  size                Int?
+  checksum            String?
+  storageProvider     StorageProvider @default(LOCAL)
+  storageKey          String?
+  publicUrl           String?
+  projectId           String
+  parentId            String?
+  uploadedById        String?
+  deletionScheduledAt DateTime?
+  storageDeletedAt    DateTime?
+  deletedAt           DateTime?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  project    Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent     ProjectFile?  @relation("FolderChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children   ProjectFile[] @relation("FolderChildren")
+  uploadedBy User?         @relation("UploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([projectId, parentId])
+  @@index([kind])
+  @@index([deletionScheduledAt])
+}
+
+model BackupJob {
+  id              String          @id @default(cuid())
+  status          BackupStatus    @default(PENDING)
+  storageProvider StorageProvider @default(LOCAL)
+  storageKey      String?
+  size            Int?
+  checksum        String?
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+  error           String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model ProductionEvent {
+  id              String              @id @default(cuid())
+  type            ProductionEventType
+  projectId       String
+  employeeId      String
+  printerId       String?
+  printedQuantity Int?
+  note            String?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationSeconds Int?
+  createdAt       DateTime            @default(now())
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  employee User    @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+
+  @@index([projectId, createdAt])
+  @@index([employeeId, createdAt])
+}
+
+model Notification {
+  id          String              @id @default(cuid())
+  title       String
+  body        String
+  channel     NotificationChannel
+  status      NotificationStatus  @default(PENDING)
+  recipientId String?
+  projectId   String?
+  sentAt      DateTime?
+  readAt      DateTime?
+  error       String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  recipient User?    @relation(fields: [recipientId], references: [id], onDelete: SetNull)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([recipientId, status])
+  @@index([channel, status])
+}
+
+model ActivityLog {
+  id        String   @id @default(cuid())
+  actorId   String?
+  action    String
+  entity    String
+  entityId  String
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([entity, entityId])
+  @@index([actorId, createdAt])
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
