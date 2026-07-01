@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { localStorageProvider } from "@/server/storage/local-storage";
+import { r2StorageProvider } from "@/server/storage/r2-storage";
 import type { StorageObject, StorageProvider } from "@/server/storage/types";
 
 const allowedExtensions = new Set(["stl", "obj", "glb", "gltf", "pdf", "zip", "png", "jpg", "jpeg", "webp"]);
@@ -9,11 +10,15 @@ const maxUploadBytes = 250 * 1024 * 1024;
 export function getStorageProvider(): StorageProvider {
   const provider = process.env.STORAGE_PROVIDER?.toUpperCase();
 
-  if (provider && provider !== "LOCAL") {
-    throw new Error(`Storage provider ${provider} is not configured yet. Use LOCAL or add a provider adapter.`);
+  if (!provider || provider === "LOCAL") {
+    return localStorageProvider;
   }
 
-  return localStorageProvider;
+  if (provider === "R2" || provider === "CLOUDFLARE_R2") {
+    return r2StorageProvider;
+  }
+
+  throw new Error(`Storage provider ${provider} is not configured yet. Use LOCAL or R2.`);
 }
 
 export function getFileKind(fileName: string) {

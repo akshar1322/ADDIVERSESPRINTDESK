@@ -1,0 +1,20 @@
+▲ Next.js 16.2.9 (webpack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.1.20:3000
+- Environments: .env
+✓ Ready in 625ms
+
+○ Compiling /sign-in ...
+ GET /sign-in 200 in 6.3s (next.js: 5.6s, application-code: 729ms)
+ GET /sign-in 200 in 246ms (next.js: 150ms, application-code: 96ms)
+ POST /api/auth/sign-in/email 200 in 3.9s (next.js: 2.7s, application-code: 1238ms)
+ POST /api/auth/sign-in/email 200 in 1909ms (next.js: 421ms, application-code: 1488ms)
+ POST /api/auth/sign-in/email 200 in 790ms (next.js: 14ms, application-code: 776ms)
+ GET /dashboard 200 in 4.4s (next.js: 3.4s, application-code: 947ms)
+ GET /dashboard 200 in 745ms (next.js: 7ms, application-code: 738ms)
+ GET /users 200 in 2.9s (next.js: 1820ms, application-code: 1044ms)
+ GET /users 200 in 163ms (next.js: 5ms, application-code: 159ms)
+ GET /users 200 in 158ms (next.js: 4ms, application-code: 154ms)
+ GET /customers 200 in 2.8s (next.js: 2.4s, application-code: 493ms)
+ GET /projects 200 in 1971ms (next.js: 1548ms, application-code: 422ms)
+ GET /files 200 in 1930ms (next.js: 1371ms, application-code: 559ms)

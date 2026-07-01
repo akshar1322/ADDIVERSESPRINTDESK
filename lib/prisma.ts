@@ -10,7 +10,7 @@ export function getPrisma() {
     const connectionString =
       process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/printflow";
 
-    const adapter = new PrismaPg(connectionString);
+    const adapter = new PrismaPg({ connectionString });
     globalForPrisma.prisma = new PrismaClient({ adapter });
   }
 
