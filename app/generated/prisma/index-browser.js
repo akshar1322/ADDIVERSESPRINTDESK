@@ -176,6 +176,7 @@ exports.Prisma.CustomerScalarFieldEnum = {
   id: 'id',
   name: 'name',
   company: 'company',
+  contactPerson: 'contactPerson',
   email: 'email',
   phone: 'phone',
   whatsapp: 'whatsapp',
@@ -193,6 +194,9 @@ exports.Prisma.PrinterScalarFieldEnum = {
   name: 'name',
   model: 'model',
   status: 'status',
+  machineNumber: 'machineNumber',
+  location: 'location',
+  isActive: 'isActive',
   serialNumber: 'serialNumber',
   buildVolume: 'buildVolume',
   currentProjectId: 'currentProjectId',
@@ -208,14 +212,25 @@ exports.Prisma.ProjectScalarFieldEnum = {
   description: 'description',
   priority: 'priority',
   status: 'status',
+  workflowStatus: 'workflowStatus',
+  jobNumber: 'jobNumber',
   quantity: 'quantity',
+  requiredQuantity: 'requiredQuantity',
   printedQuantity: 'printedQuantity',
   material: 'material',
+  materialTypeId: 'materialTypeId',
   color: 'color',
   deliveryDate: 'deliveryDate',
+  expectedCompletionAt: 'expectedCompletionAt',
   startDate: 'startDate',
   estimatedPrintTime: 'estimatedPrintTime',
   actualPrintTime: 'actualPrintTime',
+  adminInstructions: 'adminInstructions',
+  deliveryNotes: 'deliveryNotes',
+  completedAt: 'completedAt',
+  readyToDeliverAt: 'readyToDeliverAt',
+  dispatchedAt: 'dispatchedAt',
+  archivedAt: 'archivedAt',
   notes: 'notes',
   customerId: 'customerId',
   assignedEmployeeId: 'assignedEmployeeId',
@@ -232,6 +247,8 @@ exports.Prisma.ProjectFileScalarFieldEnum = {
   id: 'id',
   name: 'name',
   kind: 'kind',
+  fileExtension: 'fileExtension',
+  previewType: 'previewType',
   mimeType: 'mimeType',
   size: 'size',
   checksum: 'checksum',
@@ -276,6 +293,118 @@ exports.Prisma.ProductionEventScalarFieldEnum = {
   createdAt: 'createdAt'
 };
 
+exports.Prisma.EmployeeScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  employeeCode: 'employeeCode',
+  pinHash: 'pinHash',
+  isActive: 'isActive',
+  defaultShiftType: 'defaultShiftType',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.EmployeeSessionScalarFieldEnum = {
+  id: 'id',
+  employeeId: 'employeeId',
+  sessionToken: 'sessionToken',
+  shiftSessionId: 'shiftSessionId',
+  verifiedAt: 'verifiedAt',
+  expiresAt: 'expiresAt',
+  lastSeenAt: 'lastSeenAt',
+  createdAt: 'createdAt'
+};
+
+exports.Prisma.ShiftDefinitionScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  type: 'type',
+  startTime: 'startTime',
+  endTime: 'endTime',
+  isActive: 'isActive',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.ShiftSessionScalarFieldEnum = {
+  id: 'id',
+  employeeId: 'employeeId',
+  shiftDefinitionId: 'shiftDefinitionId',
+  startedAt: 'startedAt',
+  endedAt: 'endedAt',
+  verifiedAt: 'verifiedAt',
+  createdAt: 'createdAt'
+};
+
+exports.Prisma.MaterialTypeScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  code: 'code',
+  unit: 'unit',
+  isActive: 'isActive',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.ProductionRunScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  printerId: 'printerId',
+  startedByEmployeeId: 'startedByEmployeeId',
+  currentEmployeeId: 'currentEmployeeId',
+  shiftSessionId: 'shiftSessionId',
+  startedAt: 'startedAt',
+  endedAt: 'endedAt',
+  status: 'status'
+};
+
+exports.Prisma.JobProgressUpdateScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  productionRunId: 'productionRunId',
+  employeeId: 'employeeId',
+  shiftSessionId: 'shiftSessionId',
+  printedQuantity: 'printedQuantity',
+  remainingQuantity: 'remainingQuantity',
+  materialUsedGrams: 'materialUsedGrams',
+  note: 'note',
+  createdAt: 'createdAt'
+};
+
+exports.Prisma.JobPhotoScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  type: 'type',
+  storageKey: 'storageKey',
+  url: 'url',
+  uploadedByEmployeeId: 'uploadedByEmployeeId',
+  createdAt: 'createdAt'
+};
+
+exports.Prisma.DeliveryScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  address: 'address',
+  notes: 'notes',
+  dispatchedByEmployeeId: 'dispatchedByEmployeeId',
+  shiftSessionId: 'shiftSessionId',
+  dispatchedAt: 'dispatchedAt',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+};
+
+exports.Prisma.HandoverScalarFieldEnum = {
+  id: 'id',
+  projectId: 'projectId',
+  fromEmployeeId: 'fromEmployeeId',
+  toEmployeeId: 'toEmployeeId',
+  fromShiftSessionId: 'fromShiftSessionId',
+  toShiftSessionId: 'toShiftSessionId',
+  note: 'note',
+  acceptedAt: 'acceptedAt',
+  createdAt: 'createdAt'
+};
+
 exports.Prisma.NotificationScalarFieldEnum = {
   id: 'id',
   title: 'title',
@@ -294,6 +423,11 @@ exports.Prisma.NotificationScalarFieldEnum = {
 exports.Prisma.ActivityLogScalarFieldEnum = {
   id: 'id',
   actorId: 'actorId',
+  actorType: 'actorType',
+  actorAdminId: 'actorAdminId',
+  actorEmployeeId: 'actorEmployeeId',
+  projectId: 'projectId',
+  shiftSessionId: 'shiftSessionId',
   action: 'action',
   entity: 'entity',
   entityId: 'entityId',
@@ -376,6 +510,16 @@ exports.ProjectStatus = exports.$Enums.ProjectStatus = {
   CANCELLED: 'CANCELLED'
 };
 
+exports.JobStatus = exports.$Enums.JobStatus = {
+  NEW: 'NEW',
+  IN_PROGRESS: 'IN_PROGRESS',
+  READY_TO_DELIVER: 'READY_TO_DELIVER',
+  DISPATCHED: 'DISPATCHED',
+  ARCHIVED: 'ARCHIVED',
+  ON_HOLD: 'ON_HOLD',
+  CANCELLED: 'CANCELLED'
+};
+
 exports.FileKind = exports.$Enums.FileKind = {
   FOLDER: 'FOLDER',
   STL: 'STL',
@@ -386,6 +530,13 @@ exports.FileKind = exports.$Enums.FileKind = {
   ZIP: 'ZIP',
   IMAGE: 'IMAGE',
   OTHER: 'OTHER'
+};
+
+exports.FilePreviewType = exports.$Enums.FilePreviewType = {
+  MODEL_3D: 'MODEL_3D',
+  IMAGE: 'IMAGE',
+  PDF: 'PDF',
+  DOWNLOAD_ONLY: 'DOWNLOAD_ONLY'
 };
 
 exports.StorageProvider = exports.$Enums.StorageProvider = {
@@ -410,6 +561,25 @@ exports.ProductionEventType = exports.$Enums.ProductionEventType = {
   IMAGE_UPLOADED: 'IMAGE_UPLOADED'
 };
 
+exports.ShiftType = exports.$Enums.ShiftType = {
+  DAY: 'DAY',
+  NIGHT: 'NIGHT',
+  CUSTOM: 'CUSTOM'
+};
+
+exports.ProductionRunStatus = exports.$Enums.ProductionRunStatus = {
+  ACTIVE: 'ACTIVE',
+  PAUSED: 'PAUSED',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED'
+};
+
+exports.PhotoType = exports.$Enums.PhotoType = {
+  COMPLETION: 'COMPLETION',
+  PACKAGING: 'PACKAGING',
+  DISPATCH: 'DISPATCH'
+};
+
 exports.NotificationChannel = exports.$Enums.NotificationChannel = {
   EMAIL: 'EMAIL',
   WHATSAPP: 'WHATSAPP',
@@ -423,6 +593,12 @@ exports.NotificationStatus = exports.$Enums.NotificationStatus = {
   READ: 'READ'
 };
 
+exports.ActivityActorType = exports.$Enums.ActivityActorType = {
+  ADMIN: 'ADMIN',
+  EMPLOYEE: 'EMPLOYEE',
+  SYSTEM: 'SYSTEM'
+};
+
 exports.Prisma.ModelName = {
   User: 'User',
   Session: 'Session',
@@ -434,6 +610,16 @@ exports.Prisma.ModelName = {
   ProjectFile: 'ProjectFile',
   BackupJob: 'BackupJob',
   ProductionEvent: 'ProductionEvent',
+  Employee: 'Employee',
+  EmployeeSession: 'EmployeeSession',
+  ShiftDefinition: 'ShiftDefinition',
+  ShiftSession: 'ShiftSession',
+  MaterialType: 'MaterialType',
+  ProductionRun: 'ProductionRun',
+  JobProgressUpdate: 'JobProgressUpdate',
+  JobPhoto: 'JobPhoto',
+  Delivery: 'Delivery',
+  Handover: 'Handover',
   Notification: 'Notification',
   ActivityLog: 'ActivityLog',
   Setting: 'Setting'

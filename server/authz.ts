@@ -21,3 +21,12 @@ export function canManageStorage(session: AuthSession) {
   const role = getRole(session);
   return role === "MASTER_ADMIN" || role === "SUB_ADMIN";
 }
+
+export function canAccessAdminPortal(session: AuthSession) {
+  const role = getRole(session);
+  return role === "MASTER_ADMIN" || role === "SUB_ADMIN";
+}
+
+export function canManageUsers(session: AuthSession) {
+  return canAccessAdminPortal(session);
+}
