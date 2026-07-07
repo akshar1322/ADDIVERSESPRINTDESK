@@ -13,6 +13,7 @@ import {
   Timer,
   Warehouse,
   Wrench,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
@@ -35,13 +36,30 @@ type WorkJob = {
   priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
   due: string;
   quantity: number;
+  printedQuantity: number;
+  remainingQuantity: number;
   material: string;
   status: "NEW" | "IN_PROGRESS" | "READY_TO_DELIVER" | "DISPATCHED" | "ARCHIVED" | "ON_HOLD" | "CANCELLED";
   printer: string;
+  printerInfo: {
+    name: string;
+    model: string;
+    machineNumber: string | null;
+    location: string | null;
+    status: string;
+    buildVolume: string | null;
+  } | null;
   note: string;
+  files: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    size: number | null;
+  }>;
   filesCount: number;
   photosCount: number;
   progressCount: number;
+  latestProgressNote: string | null;
 };
 
 type EmployeeOption = {
@@ -109,6 +127,12 @@ function priorityVariant(priority: WorkJob["priority"]) {
   return "secondary" as const;
 }
 
+function formatBytes(size: number | null) {
+  if (!size) return "-";
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function statusVariant(status: WorkJob["status"]) {
   if (status === "NEW") return "outline" as const;
   if (status === "IN_PROGRESS") return "blue" as const;
@@ -117,11 +141,9 @@ function statusVariant(status: WorkJob["status"]) {
 }
 
 function useClock() {
-  const [now, setNow] = useState<Date | null>(null);
+  const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
-    // Set immediately so the clock appears without a full second delay
-    setNow(new Date());
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
@@ -150,6 +172,9 @@ export function EmployeePortal({ employees, shiftDefinitions, session, jobsByTab
       : null,
   );
   const [message, setMessage] = useState<string | null>(null);
+  const [startJob, setStartJob] = useState<WorkJob | null>(null);
+  const [progressJob, setProgressJob] = useState<WorkJob | null>(null);
+  const [progressPrinted, setProgressPrinted] = useState(0);
   const [isPending, startTransition] = useTransition();
 
   const visibleJobs = useMemo(() => jobsByTab[activeTab], [activeTab, jobsByTab]);
@@ -207,6 +232,83 @@ export function EmployeePortal({ employees, shiftDefinitions, session, jobsByTab
       await fetch("/api/employee-sessions/current", { method: "DELETE" });
       setVerified(false);
       setSessionState(null);
+      router.refresh();
+    });
+  }
+
+  async function handleStartPrinting(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+
+    if (!startJob) return;
+
+    const formData = new FormData(event.currentTarget);
+    const employeeId = String(formData.get("employeeId") ?? "").trim();
+    const pin = String(formData.get("pin") ?? "").trim();
+    const shiftDefinitionId = String(formData.get("shiftDefinitionId") ?? "").trim();
+
+    if (!employeeId || pin.length < 4 || !shiftDefinitionId) {
+      setMessage("Choose employee, enter PIN, and select day/night shift.");
+      return;
+    }
+
+    startTransition(async () => {
+      const response = await fetch("/api/work/jobs/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: startJob.id, employeeId, pin, shiftDefinitionId }),
+      });
+
+      const result = (await response.json()) as
+        | {
+            ok: true;
+            session: {
+              employee: { id: string; name: string; employeeCode: string };
+              shift: { id: string; name: string; type: string } | null;
+              expiresAt: string;
+            };
+          }
+        | { ok: false; error?: string };
+
+      if (!response.ok || !result.ok) {
+        setMessage(!result.ok && result.error ? result.error : "Could not start printing.");
+        return;
+      }
+
+      setVerified(true);
+      setSessionState(result.session);
+      setStartJob(null);
+      setActiveTab("in-progress");
+      setMessage(`${startJob.name} moved to In Progress.`);
+      router.refresh();
+    });
+  }
+
+  async function handleProgressUpdate(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setMessage(null);
+
+    if (!progressJob) return;
+
+    const formData = new FormData(event.currentTarget);
+    const printedQuantity = Number(formData.get("printedQuantity"));
+    const note = String(formData.get("note") ?? "").trim();
+
+    startTransition(async () => {
+      const response = await fetch("/api/work/jobs/progress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jobId: progressJob.id, printedQuantity, note }),
+      });
+      const result = (await response.json()) as { ok: boolean; error?: string };
+
+      if (!response.ok || !result.ok) {
+        setMessage(result.error ?? "Could not update progress.");
+        return;
+      }
+
+      setProgressJob(null);
+      setMessage("Progress updated.");
       router.refresh();
     });
   }
@@ -414,7 +516,10 @@ export function EmployeePortal({ employees, shiftDefinitions, session, jobsByTab
                         </div>
                         <div className="rounded-lg border border-black/10 bg-muted/30 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-500">Quantity</p>
-                          <p className="mt-1 text-sm font-medium">{job.quantity}</p>
+                          <p className="mt-1 text-sm font-medium">
+                            {job.printedQuantity} / {job.quantity}
+                          </p>
+                          <p className="mt-1 text-xs text-slate-600">{job.remainingQuantity} remaining</p>
                         </div>
                         <div className="rounded-lg border border-black/10 bg-muted/30 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-500">Material</p>
@@ -423,6 +528,18 @@ export function EmployeePortal({ employees, shiftDefinitions, session, jobsByTab
                         <div className="rounded-lg border border-black/10 bg-muted/30 p-3">
                           <p className="text-[11px] uppercase tracking-wide text-slate-500">Printer</p>
                           <p className="mt-1 text-sm font-medium">{job.printer}</p>
+                          {job.printerInfo ? (
+                            <p className="mt-1 text-xs text-slate-600">
+                              {[
+                                job.printerInfo.model,
+                                job.printerInfo.machineNumber,
+                                job.printerInfo.location,
+                                job.printerInfo.buildVolume,
+                              ]
+                                .filter(Boolean)
+                                .join(" • ")}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
 
@@ -443,18 +560,52 @@ export function EmployeePortal({ employees, shiftDefinitions, session, jobsByTab
 
                       <div className="flex items-center gap-2 rounded-lg border border-dashed border-black/10 p-3 text-sm text-slate-600">
                         <Clock3 className="size-4" />
-                        {job.note}
+                        {job.latestProgressNote ?? job.note}
                       </div>
+
+                      {job.files.length > 0 ? (
+                        <div className="grid gap-2 rounded-lg border border-black/10 bg-white p-3">
+                          <p className="text-[11px] uppercase tracking-wide text-slate-500">Production files</p>
+                          <div className="grid gap-2">
+                            {job.files.map((file) => (
+                              <a
+                                key={file.id}
+                                href={`/api/files/${file.id}`}
+                                className="flex items-center justify-between gap-3 rounded-lg border border-black/10 px-3 py-2 text-sm hover:bg-slate-50"
+                              >
+                                <span className="min-w-0 truncate">
+                                  {file.name}
+                                  <span className="ml-2 text-xs text-slate-500">{file.kind}</span>
+                                </span>
+                                <span className="shrink-0 text-xs text-slate-500">{formatBytes(file.size)}</span>
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
 
                       <div className="flex flex-wrap gap-2">
                         <Button variant="outline" disabled={!verified}>
                           <Files className="size-4" />
                           View more
                         </Button>
-                        <Button disabled={!verified}>
+                        <Button type="button" onClick={() => setStartJob(job)}>
                           <Printer className="size-4" />
-                          Start printing
+                          {job.status === "IN_PROGRESS" ? "Resume printing" : "Start printing"}
                         </Button>
+                        {job.status === "IN_PROGRESS" ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setProgressJob(job);
+                              setProgressPrinted(job.printedQuantity);
+                            }}
+                          >
+                            <Timer className="size-4" />
+                            Update qty
+                          </Button>
+                        ) : null}
                       </div>
                     </CardContent>
                   </Card>
@@ -464,6 +615,121 @@ export function EmployeePortal({ employees, shiftDefinitions, session, jobsByTab
           </section>
         </div>
       </section>
+
+      {startJob ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 py-8">
+          <div className="w-full max-w-lg rounded-lg border bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b p-4">
+              <div>
+                <h2 className="text-lg font-semibold">Start printing</h2>
+                <p className="mt-1 text-sm text-slate-600">{startJob.name}</p>
+              </div>
+              <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={() => setStartJob(null)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+            <form className="grid gap-4 p-4" onSubmit={handleStartPrinting}>
+              <div className="grid gap-2">
+                <Label htmlFor="start-employeeId">Employee name</Label>
+                <select
+                  id="start-employeeId"
+                  name="employeeId"
+                  defaultValue={sessionState?.employee.id ?? ""}
+                  className="h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none"
+                >
+                  <option value="" disabled>
+                    Choose employee
+                  </option>
+                  {employees.map((employee) => (
+                    <option key={employee.id} value={employee.id}>
+                      {employee.name} ({employee.employeeCode})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="start-pin">PIN</Label>
+                <Input id="start-pin" name="pin" type="password" inputMode="numeric" placeholder="Enter PIN" autoFocus />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="start-shiftDefinitionId">Shift</Label>
+                <select
+                  id="start-shiftDefinitionId"
+                  name="shiftDefinitionId"
+                  defaultValue={sessionState?.shift?.id ?? shiftDefinitions[0]?.id ?? ""}
+                  className="h-10 rounded-lg border border-input bg-background px-3 text-sm outline-none"
+                >
+                  {shiftDefinitions.map((shift) => (
+                    <option key={shift.id} value={shift.id}>
+                      {shift.name} ({shift.type})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex justify-end gap-2 border-t pt-4">
+                <Button type="button" variant="outline" onClick={() => setStartJob(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isPending || employees.length === 0 || shiftDefinitions.length === 0}>
+                  <Printer className="size-4" />
+                  Start print
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {progressJob ? (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 py-8">
+          <div className="w-full max-w-lg rounded-lg border bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-4 border-b p-4">
+              <div>
+                <h2 className="text-lg font-semibold">Update progress</h2>
+                <p className="mt-1 text-sm text-slate-600">{progressJob.name}</p>
+              </div>
+              <Button type="button" variant="ghost" size="icon" aria-label="Close" onClick={() => setProgressJob(null)}>
+                <X className="size-4" />
+              </Button>
+            </div>
+            <form className="grid gap-4 p-4" onSubmit={handleProgressUpdate}>
+              <div className="grid gap-2">
+                <Label htmlFor="printedQuantity">Printed quantity</Label>
+                <Input
+                  id="printedQuantity"
+                  name="printedQuantity"
+                  type="number"
+                  min="0"
+                  max={progressJob.quantity}
+                  value={progressPrinted}
+                  onChange={(event) => setProgressPrinted(Number(event.target.value))}
+                  required
+                />
+                <p className="text-xs text-slate-600">
+                  Total {progressJob.quantity}. Remaining {Math.max(progressJob.quantity - progressPrinted, 0)}.
+                </p>
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="progress-note">Notes</Label>
+                <textarea
+                  id="progress-note"
+                  name="note"
+                  className="min-h-24 rounded-lg border border-input bg-background px-3 py-2 text-sm outline-none"
+                  placeholder="Print quality, issue, material note..."
+                />
+              </div>
+              <div className="flex justify-end gap-2 border-t pt-4">
+                <Button type="button" variant="outline" onClick={() => setProgressJob(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={isPending}>
+                  Save progress
+                </Button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

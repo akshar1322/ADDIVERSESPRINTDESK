@@ -11,6 +11,8 @@ const visibleDispatchWindowMs = 24 * 60 * 60 * 1000;
 
 export async function getEmployeeWorkspaceState() {
   const prisma = getPrisma();
+  await ensureDefaultShiftDefinitions(prisma);
+
   const cookieStore = await cookies();
   const sessionToken = cookieStore.get(employeeSessionCookieName)?.value ?? null;
   const session = await getEmployeeWorkspaceSessionByToken(prisma, sessionToken);
@@ -47,9 +49,22 @@ export async function getEmployeeWorkspaceState() {
         expectedCompletionAt: true,
         requiredQuantity: true,
         quantity: true,
+        printedQuantity: true,
         material: true,
         customer: { select: { name: true } },
-        assignedPrinter: { select: { name: true } },
+        assignedPrinter: {
+          select: { name: true, model: true, machineNumber: true, location: true, status: true, buildVolume: true },
+        },
+        files: {
+          where: { deletedAt: null, kind: { not: "FOLDER" } },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, name: true, kind: true, size: true },
+        },
+        progressUpdates: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { note: true },
+        },
         _count: { select: { files: true, photos: true, progressUpdates: true } },
       },
     }).then((jobs) => jobs.map(mapProjectToJob)),
@@ -67,6 +82,22 @@ export async function getEmployeeWorkspaceState() {
   };
 }
 
+async function ensureDefaultShiftDefinitions(prisma: ReturnType<typeof getPrisma>) {
+  const count = await prisma.shiftDefinition.count({ where: { isActive: true } });
+
+  if (count > 0) {
+    return;
+  }
+
+  await prisma.shiftDefinition.createMany({
+    data: [
+      { name: "Day Shift", type: "DAY", startTime: "09:00", endTime: "18:00", isActive: true },
+      { name: "Night Shift", type: "NIGHT", startTime: "18:00", endTime: "03:00", isActive: true },
+    ],
+    skipDuplicates: true,
+  });
+}
+
 async function getJobsByStatus(prisma: ReturnType<typeof getPrisma>, statuses: Array<"NEW" | "IN_PROGRESS" | "READY_TO_DELIVER">) {
   const jobs = await prisma.project.findMany({
     where: { deletedAt: null, workflowStatus: { in: statuses } },
@@ -80,9 +111,22 @@ async function getJobsByStatus(prisma: ReturnType<typeof getPrisma>, statuses: A
       expectedCompletionAt: true,
       requiredQuantity: true,
       quantity: true,
+      printedQuantity: true,
       material: true,
       customer: { select: { name: true } },
-      assignedPrinter: { select: { name: true } },
+      assignedPrinter: {
+        select: { name: true, model: true, machineNumber: true, location: true, status: true, buildVolume: true },
+      },
+      files: {
+        where: { deletedAt: null, kind: { not: "FOLDER" } },
+        orderBy: { createdAt: "desc" },
+        select: { id: true, name: true, kind: true, size: true },
+      },
+      progressUpdates: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { note: true },
+      },
       _count: { select: { files: true, photos: true, progressUpdates: true } },
     },
   });
@@ -98,12 +142,24 @@ function mapProjectToJob(job: {
   workflowStatus: "NEW" | "IN_PROGRESS" | "READY_TO_DELIVER" | "DISPATCHED" | "ARCHIVED" | "ON_HOLD" | "CANCELLED";
   expectedCompletionAt: Date | null;
   quantity: number;
+  printedQuantity: number;
   requiredQuantity: number | null;
   material: string;
   customer: { name: string };
-  assignedPrinter: { name: string } | null;
+  assignedPrinter: {
+    name: string;
+    model: string;
+    machineNumber: string | null;
+    location: string | null;
+    status: string;
+    buildVolume: string | null;
+  } | null;
+  files: Array<{ id: string; name: string; kind: string; size: number | null }>;
+  progressUpdates: Array<{ note: string | null }>;
   _count: { files: number; photos: number; progressUpdates: number };
 }): EmployeeWorkspaceJob {
+  const totalQuantity = job.requiredQuantity ?? job.quantity;
+
   return {
     id: job.id,
     jobNumber: job.jobNumber,
@@ -111,13 +167,18 @@ function mapProjectToJob(job: {
     name: job.name,
     priority: job.priority,
     due: job.expectedCompletionAt ? job.expectedCompletionAt.toLocaleString() : "No due date",
-    quantity: job.requiredQuantity ?? job.quantity,
+    quantity: totalQuantity,
+    printedQuantity: job.printedQuantity,
+    remainingQuantity: Math.max(totalQuantity - job.printedQuantity, 0),
     material: job.material,
     status: job.workflowStatus,
     printer: job.assignedPrinter?.name ?? "Unassigned",
+    printerInfo: job.assignedPrinter,
     note: `${job._count.files} file(s), ${job._count.photos} photo(s), ${job._count.progressUpdates} update(s)`,
+    files: job.files,
     filesCount: job._count.files,
     photosCount: job._count.photos,
     progressCount: job._count.progressUpdates,
+    latestProgressNote: job.progressUpdates[0]?.note ?? null,
   };
 }

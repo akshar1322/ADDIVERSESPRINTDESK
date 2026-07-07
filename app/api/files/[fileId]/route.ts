@@ -1,6 +1,10 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { getPrisma } from "@/lib/prisma";
 import { getSessionFromRequest } from "@/lib/session";
 import { canManageStorage } from "@/server/authz";
+import { getEmployeeWorkspaceSession } from "@/server/employee-sessions";
 import { jsonError } from "@/server/http";
 import { getStorageProvider } from "@/server/storage";
 
@@ -9,6 +13,49 @@ export const runtime = "nodejs";
 type RouteContext = {
   params: Promise<{ fileId: string }>;
 };
+
+function localStoragePath(key: string) {
+  const storageRoot = path.join(process.cwd(), ".storage");
+  const normalized = path.normalize(key).replace(/^(\.\.(\/|\\|$))+/, "");
+  return path.join(storageRoot, normalized);
+}
+
+export async function GET(request: Request, context: RouteContext) {
+  const prisma = getPrisma();
+  const adminSession = await getSessionFromRequest(request);
+  const employeeSession = await getEmployeeWorkspaceSession(prisma, request.headers.get("cookie"));
+
+  if (!adminSession && !employeeSession) {
+    return jsonError("Unauthorized", 401);
+  }
+
+  const { fileId } = await context.params;
+  const file = await prisma.projectFile.findFirst({
+    where: { id: fileId, deletedAt: null },
+    select: { name: true, mimeType: true, storageProvider: true, storageKey: true, publicUrl: true },
+  });
+
+  if (!file?.storageKey) {
+    return jsonError("File not found.", 404);
+  }
+
+  if (file.publicUrl && file.storageProvider !== "LOCAL") {
+    return Response.redirect(file.publicUrl);
+  }
+
+  if (file.storageProvider !== "LOCAL") {
+    return jsonError("This file is stored privately and has no public download URL.", 409);
+  }
+
+  const bytes = await readFile(localStoragePath(file.storageKey));
+
+  return new Response(bytes, {
+    headers: {
+      "Content-Type": file.mimeType ?? "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${encodeURIComponent(file.name)}"`,
+    },
+  });
+}
 
 export async function DELETE(request: Request, context: RouteContext) {
   const session = await getSessionFromRequest(request);

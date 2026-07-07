@@ -12,6 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { getPrisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/session";
 import { cn } from "@/lib/utils";
+import { assertValidEmployeePin, hashEmployeePin } from "@/server/employees/pin";
 import { canManageUsers, getRole } from "@/server/authz";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,11 @@ function parseStatus(value: string) {
   return "INVITED";
 }
 
+function parseShiftType(value: string) {
+  if (value === "DAY" || value === "NIGHT" || value === "CUSTOM") return value;
+  return null;
+}
+
 function formatLabel(value: string) {
   return value
     .split("_")
@@ -55,6 +61,10 @@ function getStatusVariant(status: string) {
   if (status === "ACTIVE") return "green";
   if (status === "SUSPENDED") return "amber";
   return "outline";
+}
+
+function buildEmployeeCode(userId: string) {
+  return `USR-${userId.slice(-8).toUpperCase()}`;
 }
 
 async function assertCanManageEmployeeUsers() {
@@ -81,6 +91,8 @@ async function updateUser(formData: FormData) {
     const role = parseRole(readString(formData, "role"), actorRole);
     const status = parseStatus(readString(formData, "status"));
     const newPassword = readOptionalString(formData, "newPassword");
+    const employeePin = readOptionalString(formData, "employeePin");
+    const defaultShiftType = parseShiftType(readString(formData, "defaultShiftType"));
 
     if (!userId || !name || !email) {
       redirect("/admin/employees?error=Name+and+email+are+required.");
@@ -88,6 +100,10 @@ async function updateUser(formData: FormData) {
 
     if (newPassword && newPassword.length < 8) {
       redirect("/admin/employees?error=New+password+must+be+at+least+8+characters.");
+    }
+
+    if (employeePin) {
+      assertValidEmployeePin(employeePin);
     }
 
     const prisma = getPrisma();
@@ -126,6 +142,37 @@ async function updateUser(formData: FormData) {
         updatedById: session.user.id,
       },
     });
+
+    const employeeCode = buildEmployeeCode(userId);
+    const existingFloorEmployee = await prisma.employee.findUnique({
+      where: { employeeCode },
+      select: { id: true },
+    });
+
+    if (role === "EMPLOYEE") {
+      const pinHash = employeePin ? await hashEmployeePin(employeePin) : undefined;
+      await prisma.employee.upsert({
+        where: { employeeCode },
+        create: {
+          name,
+          employeeCode,
+          pinHash: pinHash ?? (await hashEmployeePin("1234")),
+          isActive: status === "ACTIVE",
+          defaultShiftType,
+        },
+        update: {
+          name,
+          isActive: status === "ACTIVE",
+          defaultShiftType,
+          ...(pinHash ? { pinHash } : {}),
+        },
+      });
+    } else if (existingFloorEmployee) {
+      await prisma.employee.update({
+        where: { id: existingFloorEmployee.id },
+        data: { isActive: false },
+      });
+    }
 
     // Reset password if provided
     if (newPassword) {
@@ -247,6 +294,8 @@ async function createUser(formData: FormData) {
     const password = readString(formData, "password");
     const phone = readOptionalString(formData, "phone");
     const role = parseRole(readString(formData, "role"), actorRole);
+    const employeePin = readOptionalString(formData, "employeePin");
+    const defaultShiftType = parseShiftType(readString(formData, "defaultShiftType"));
 
     if (!name || !email || !password) {
       redirect("/admin/employees?error=Name%2C+email%2C+and+password+are+required.");
@@ -254,6 +303,14 @@ async function createUser(formData: FormData) {
 
     if (password.length < 8) {
       redirect("/admin/employees?error=Password+must+be+at+least+8+characters.");
+    }
+
+    if (role === "EMPLOYEE" && !employeePin) {
+      redirect("/admin/employees?error=PIN+is+required+when+creating+an+employee.");
+    }
+
+    if (employeePin) {
+      assertValidEmployeePin(employeePin);
     }
 
     // Check if email already exists
@@ -285,6 +342,18 @@ async function createUser(formData: FormData) {
         updatedById: session.user.id,
       },
     });
+
+    if (role === "EMPLOYEE") {
+      await prisma.employee.create({
+        data: {
+          name,
+          employeeCode: buildEmployeeCode(result.user.id),
+          pinHash: await hashEmployeePin(employeePin!),
+          isActive: false,
+          defaultShiftType,
+        },
+      });
+    }
 
     await prisma.activityLog.create({
       data: {
@@ -323,12 +392,19 @@ export default async function AdminEmployeesPage({
   const currentRole = getRole(session);
   const { error, success } = await searchParams;
 
-  const employees = await getPrisma().user.findMany({
+  const prisma = getPrisma();
+  const [employees, floorEmployees] = await Promise.all([
+    prisma.user.findMany({
     where: { deletedAt: null },
     orderBy: [{ role: "asc" }, { name: "asc" }],
     take: 100,
     select: { id: true, name: true, email: true, role: true, status: true, phone: true },
-  });
+    }),
+    prisma.employee.findMany({
+      select: { employeeCode: true, defaultShiftType: true },
+    }),
+  ]);
+  const floorEmployeeByCode = new Map(floorEmployees.map((employee) => [employee.employeeCode, employee]));
 
   return (
     <main className="flex-1 space-y-6 p-4 md:p-6">
@@ -401,6 +477,18 @@ export default async function AdminEmployeesPage({
                 <option value="EMPLOYEE">Employee</option>
               </select>
             </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-employee-pin">Employee PIN</Label>
+              <Input id="new-employee-pin" name="employeePin" inputMode="numeric" placeholder="4-12 digits for work floor" />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-default-shift">Default shift</Label>
+              <select id="new-default-shift" name="defaultShiftType" className={selectClass} defaultValue="DAY">
+                <option value="DAY">Day</option>
+                <option value="NIGHT">Night</option>
+                <option value="CUSTOM">Custom</option>
+              </select>
+            </div>
             <div className="flex items-end">
               <Button type="submit" className="w-full gap-2">
                 <UserPlus className="size-4" />
@@ -440,6 +528,8 @@ export default async function AdminEmployeesPage({
                         New password
                       </span>
                     </TableHead>
+                    <TableHead className="min-w-40">Work PIN</TableHead>
+                    <TableHead className="min-w-36">Default shift</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -447,6 +537,7 @@ export default async function AdminEmployeesPage({
                   {employees.map((employee) => {
                     const isProtectedMasterAdmin = employee.role === "MASTER_ADMIN" && currentRole !== "MASTER_ADMIN";
                     const isSelf = employee.id === session.user.id;
+                    const floorEmployee = floorEmployeeByCode.get(buildEmployeeCode(employee.id));
 
                     return (
                       <TableRow key={employee.id}>
@@ -481,6 +572,20 @@ export default async function AdminEmployeesPage({
                             disabled={isProtectedMasterAdmin}
                             required
                           />
+                        </TableCell>
+
+                        <TableCell>
+                          <select
+                            form={`update-${employee.id}`}
+                            name="defaultShiftType"
+                            className={cn(selectClass, "h-9")}
+                            defaultValue={floorEmployee?.defaultShiftType ?? "DAY"}
+                            disabled={isProtectedMasterAdmin || employee.role !== "EMPLOYEE"}
+                          >
+                            <option value="DAY">Day</option>
+                            <option value="NIGHT">Night</option>
+                            <option value="CUSTOM">Custom</option>
+                          </select>
                         </TableCell>
 
                         {/* Phone */}
@@ -533,6 +638,16 @@ export default async function AdminEmployeesPage({
                             placeholder="Leave blank to keep"
                             minLength={8}
                             disabled={isProtectedMasterAdmin}
+                          />
+                        </TableCell>
+
+                        <TableCell>
+                          <Input
+                            form={`update-${employee.id}`}
+                            name="employeePin"
+                            inputMode="numeric"
+                            placeholder={employee.role === "EMPLOYEE" ? "Set new PIN" : "Only employees"}
+                            disabled={isProtectedMasterAdmin || employee.role !== "EMPLOYEE"}
                           />
                         </TableCell>
 

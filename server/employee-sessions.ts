@@ -126,11 +126,28 @@ export type EmployeeWorkspaceJob = {
   priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
   due: string;
   quantity: number;
+  printedQuantity: number;
+  remainingQuantity: number;
   material: string;
   status: "NEW" | "IN_PROGRESS" | "READY_TO_DELIVER" | "DISPATCHED" | "ARCHIVED" | "ON_HOLD" | "CANCELLED";
   printer: string;
+  printerInfo: {
+    name: string;
+    model: string;
+    machineNumber: string | null;
+    location: string | null;
+    status: string;
+    buildVolume: string | null;
+  } | null;
   note: string;
+  files: Array<{
+    id: string;
+    name: string;
+    kind: string;
+    size: number | null;
+  }>;
   filesCount: number;
   photosCount: number;
   progressCount: number;
+  latestProgressNote: string | null;
 };
