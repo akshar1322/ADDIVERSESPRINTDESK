@@ -1,6 +1,8 @@
 import { revalidatePath } from "next/cache";
-import { Save, Trash2, Users } from "lucide-react";
+import { redirect } from "next/navigation";
+import { AlertCircle, CheckCircle2, KeyRound, Save, Trash2, UserPlus, Users } from "lucide-react";
 
+import { auth } from "@/lib/auth";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -65,117 +67,262 @@ async function assertCanManageEmployeeUsers() {
   return { session, actorRole: getRole(session) };
 }
 
+// ─── Server Actions ────────────────────────────────────────────────────────────
+
 async function updateUser(formData: FormData) {
   "use server";
 
-  const { session, actorRole } = await assertCanManageEmployeeUsers();
-  const userId = readString(formData, "userId");
-  const name = readString(formData, "name");
-  const phone = readOptionalString(formData, "phone");
-  const role = parseRole(readString(formData, "role"), actorRole);
-  const status = parseStatus(readString(formData, "status"));
+  try {
+    const { session, actorRole } = await assertCanManageEmployeeUsers();
+    const userId = readString(formData, "userId");
+    const name = readString(formData, "name");
+    const email = readString(formData, "email");
+    const phone = readOptionalString(formData, "phone");
+    const role = parseRole(readString(formData, "role"), actorRole);
+    const status = parseStatus(readString(formData, "status"));
+    const newPassword = readOptionalString(formData, "newPassword");
 
-  if (!userId || !name) {
-    throw new Error("User id and name are required.");
+    if (!userId || !name || !email) {
+      redirect("/admin/employees?error=Name+and+email+are+required.");
+    }
+
+    if (newPassword && newPassword.length < 8) {
+      redirect("/admin/employees?error=New+password+must+be+at+least+8+characters.");
+    }
+
+    const prisma = getPrisma();
+    const target = await prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true, role: true, email: true },
+    });
+
+    if (!target) {
+      redirect("/admin/employees?error=User+not+found.");
+    }
+
+    if (target.role === "MASTER_ADMIN" && actorRole !== "MASTER_ADMIN") {
+      redirect("/admin/employees?error=Only+master+admins+can+update+a+master+admin.");
+    }
+
+    // Check email uniqueness if changed
+    if (email !== target.email) {
+      const existing = await prisma.user.findFirst({
+        where: { email, deletedAt: null, id: { not: userId } },
+        select: { id: true },
+      });
+      if (existing) {
+        redirect("/admin/employees?error=That+email+is+already+in+use+by+another+account.");
+      }
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        name,
+        email,
+        phone,
+        role,
+        status,
+        updatedById: session.user.id,
+      },
+    });
+
+    // Reset password if provided
+    if (newPassword) {
+      const account = await prisma.account.findFirst({
+        where: { userId, providerId: "credential" },
+        select: { id: true },
+      });
+
+      if (account) {
+        const { hashPassword } = await import("better-auth/crypto");
+        const hashed = await hashPassword(newPassword);
+        await prisma.account.update({
+          where: { id: account.id },
+          data: { password: hashed },
+        });
+      }
+    }
+
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        actorAdminId: session.user.id,
+        actorType: "ADMIN",
+        action: "USER_UPDATED",
+        entity: "User",
+        entityId: userId,
+        metadata: { role, status, passwordReset: !!newPassword },
+      },
+    });
+  } catch (err: unknown) {
+    // redirect() throws internally – re-throw it
+    if (
+      err instanceof Error &&
+      (err.message === "NEXT_REDIRECT" || (err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT"))
+    ) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : "An unexpected error occurred.";
+    redirect(`/admin/employees?error=${encodeURIComponent(message)}`);
   }
-
-  const prisma = getPrisma();
-  const target = await prisma.user.findFirst({
-    where: { id: userId, deletedAt: null },
-    select: { id: true, role: true },
-  });
-
-  if (!target) {
-    throw new Error("User not found.");
-  }
-
-  if (target.role === "MASTER_ADMIN" && actorRole !== "MASTER_ADMIN") {
-    throw new Error("Only master admins can update a master admin.");
-  }
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      name,
-      phone,
-      role,
-      status,
-      updatedById: session.user.id,
-    },
-  });
-
-  await prisma.activityLog.create({
-    data: {
-      actorId: session.user.id,
-      actorAdminId: session.user.id,
-      actorType: "ADMIN",
-      action: "USER_UPDATED",
-      entity: "User",
-      entityId: userId,
-      metadata: { role, status },
-    },
-  });
 
   revalidatePath("/admin/employees");
+  redirect("/admin/employees?success=User+updated+successfully.");
 }
 
 async function deleteUser(formData: FormData) {
   "use server";
 
-  const { session, actorRole } = await assertCanManageEmployeeUsers();
-  const userId = readString(formData, "userId");
+  try {
+    const { session, actorRole } = await assertCanManageEmployeeUsers();
+    const userId = readString(formData, "userId");
 
-  if (!userId) {
-    throw new Error("User id is required.");
+    if (!userId) {
+      redirect("/admin/employees?error=User+id+is+required.");
+    }
+
+    if (userId === session.user.id) {
+      redirect("/admin/employees?error=You+cannot+delete+your+own+signed-in+account.");
+    }
+
+    const prisma = getPrisma();
+    const target = await prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true, role: true },
+    });
+
+    if (!target) {
+      redirect("/admin/employees?error=User+not+found.");
+    }
+
+    if (target.role === "MASTER_ADMIN" && actorRole !== "MASTER_ADMIN") {
+      redirect("/admin/employees?error=Only+master+admins+can+delete+a+master+admin.");
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        deletedAt: new Date(),
+        status: "SUSPENDED",
+        updatedById: session.user.id,
+      },
+    });
+
+    await prisma.session.deleteMany({ where: { userId } });
+
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        actorAdminId: session.user.id,
+        actorType: "ADMIN",
+        action: "USER_SOFT_DELETED",
+        entity: "User",
+        entityId: userId,
+        metadata: { previousRole: target.role },
+      },
+    });
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      (err.message === "NEXT_REDIRECT" || (err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT"))
+    ) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : "An unexpected error occurred.";
+    redirect(`/admin/employees?error=${encodeURIComponent(message)}`);
   }
-
-  if (userId === session.user.id) {
-    throw new Error("You cannot delete your own signed-in account.");
-  }
-
-  const prisma = getPrisma();
-  const target = await prisma.user.findFirst({
-    where: { id: userId, deletedAt: null },
-    select: { id: true, role: true },
-  });
-
-  if (!target) {
-    throw new Error("User not found.");
-  }
-
-  if (target.role === "MASTER_ADMIN" && actorRole !== "MASTER_ADMIN") {
-    throw new Error("Only master admins can delete a master admin.");
-  }
-
-  await prisma.user.update({
-    where: { id: userId },
-    data: {
-      deletedAt: new Date(),
-      status: "SUSPENDED",
-      updatedById: session.user.id,
-    },
-  });
-
-  await prisma.session.deleteMany({ where: { userId } });
-
-  await prisma.activityLog.create({
-    data: {
-      actorId: session.user.id,
-      actorAdminId: session.user.id,
-      actorType: "ADMIN",
-      action: "USER_SOFT_DELETED",
-      entity: "User",
-      entityId: userId,
-      metadata: { previousRole: target.role },
-    },
-  });
 
   revalidatePath("/admin/employees");
+  redirect("/admin/employees?success=User+removed+successfully.");
 }
 
-export default async function AdminEmployeesPage() {
+async function createUser(formData: FormData) {
+  "use server";
+
+  try {
+    const { session, actorRole } = await assertCanManageEmployeeUsers();
+    const name = readString(formData, "name");
+    const email = readString(formData, "email");
+    const password = readString(formData, "password");
+    const phone = readOptionalString(formData, "phone");
+    const role = parseRole(readString(formData, "role"), actorRole);
+
+    if (!name || !email || !password) {
+      redirect("/admin/employees?error=Name%2C+email%2C+and+password+are+required.");
+    }
+
+    if (password.length < 8) {
+      redirect("/admin/employees?error=Password+must+be+at+least+8+characters.");
+    }
+
+    // Check if email already exists
+    const prisma = getPrisma();
+    const existing = await prisma.user.findFirst({
+      where: { email },
+      select: { id: true, deletedAt: true },
+    });
+
+    if (existing) {
+      redirect("/admin/employees?error=A+user+with+that+email+already+exists.+Use+a+different+email.");
+    }
+
+    const result = await auth.api.signUpEmail({
+      body: { name, email, password },
+    });
+
+    if (!result?.user?.id) {
+      redirect("/admin/employees?error=Failed+to+create+user+account.");
+    }
+
+    await prisma.user.update({
+      where: { id: result.user.id },
+      data: {
+        role,
+        phone,
+        status: "INVITED",
+        createdById: session.user.id,
+        updatedById: session.user.id,
+      },
+    });
+
+    await prisma.activityLog.create({
+      data: {
+        actorId: session.user.id,
+        actorAdminId: session.user.id,
+        actorType: "ADMIN",
+        action: "USER_CREATED",
+        entity: "User",
+        entityId: result.user.id,
+        metadata: { role, email },
+      },
+    });
+  } catch (err: unknown) {
+    if (
+      err instanceof Error &&
+      (err.message === "NEXT_REDIRECT" || (err as { digest?: string }).digest?.startsWith("NEXT_REDIRECT"))
+    ) {
+      throw err;
+    }
+    const message = err instanceof Error ? err.message : "An unexpected error occurred.";
+    redirect(`/admin/employees?error=${encodeURIComponent(message)}`);
+  }
+
+  revalidatePath("/admin/employees");
+  redirect("/admin/employees?success=Employee+created+successfully.");
+}
+
+// ─── Page ──────────────────────────────────────────────────────────────────────
+
+export default async function AdminEmployeesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string; success?: string }>;
+}) {
   const session = await requireSession();
   const currentRole = getRole(session);
+  const { error, success } = await searchParams;
+
   const employees = await getPrisma().user.findMany({
     where: { deletedAt: null },
     orderBy: [{ role: "asc" }, { name: "asc" }],
@@ -185,6 +332,7 @@ export default async function AdminEmployeesPage() {
 
   return (
     <main className="flex-1 space-y-6 p-4 md:p-6">
+      {/* Header */}
       <section className="flex flex-col gap-2">
         <div className="flex items-center gap-2 text-sm font-medium text-blue-600">
           <Users className="size-4" />
@@ -196,10 +344,80 @@ export default async function AdminEmployeesPage() {
         </p>
       </section>
 
+      {/* Error / Success banners */}
+      {error && (
+        <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
+          <span>{decodeURIComponent(error)}</span>
+        </div>
+      )}
+      {success && (
+        <div className="flex items-start gap-3 rounded-lg border border-green-500/40 bg-green-500/10 px-4 py-3 text-sm text-green-700 dark:text-green-400">
+          <CheckCircle2 className="mt-0.5 size-4 shrink-0" />
+          <span>{decodeURIComponent(success)}</span>
+        </div>
+      )}
+
+      {/* Add new employee */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <UserPlus className="size-4 text-blue-600" />
+            Add new employee
+          </CardTitle>
+          <CardDescription>Create a new staff account with login credentials.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form action={createUser} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-name">
+                Full name <span className="text-destructive">*</span>
+              </Label>
+              <Input id="new-name" name="name" placeholder="Jane Doe" required />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-email">
+                Email address <span className="text-destructive">*</span>
+              </Label>
+              <Input id="new-email" name="email" type="email" placeholder="jane@example.com" required />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-password">
+                Password <span className="text-destructive">*</span>
+              </Label>
+              <Input id="new-password" name="password" type="password" placeholder="Min. 8 characters" required minLength={8} />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-phone">Phone number</Label>
+              <Input id="new-phone" name="phone" placeholder="+91..." />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="new-role">
+                Role <span className="text-destructive">*</span>
+              </Label>
+              <select id="new-role" name="role" className={selectClass} defaultValue="EMPLOYEE">
+                {currentRole === "MASTER_ADMIN" ? <option value="MASTER_ADMIN">Master Admin</option> : null}
+                <option value="SUB_ADMIN">Sub Admin</option>
+                <option value="EMPLOYEE">Employee</option>
+              </select>
+            </div>
+            <div className="flex items-end">
+              <Button type="submit" className="w-full gap-2">
+                <UserPlus className="size-4" />
+                Add employee
+              </Button>
+            </div>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Staff accounts table */}
       <Card>
         <CardHeader>
           <CardTitle>Staff accounts</CardTitle>
-          <CardDescription>Changes are recorded with the current admin identity.</CardDescription>
+          <CardDescription>
+            Edit name, email, phone, role, status, or reset a password inline — then click Save.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {employees.length === 0 ? (
@@ -207,103 +425,152 @@ export default async function AdminEmployeesPage() {
               No active users found.
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-60">User</TableHead>
-                  <TableHead className="min-w-40">Phone</TableHead>
-                  <TableHead className="min-w-40">Role</TableHead>
-                  <TableHead className="min-w-36">Status</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {employees.map((employee) => {
-                  const isProtectedMasterAdmin = employee.role === "MASTER_ADMIN" && currentRole !== "MASTER_ADMIN";
-                  const isSelf = employee.id === session.user.id;
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="min-w-56">Name</TableHead>
+                    <TableHead className="min-w-48">Email</TableHead>
+                    <TableHead className="min-w-36">Phone</TableHead>
+                    <TableHead className="min-w-36">Role</TableHead>
+                    <TableHead className="min-w-32">Status</TableHead>
+                    <TableHead className="min-w-48">
+                      <span className="flex items-center gap-1.5">
+                        <KeyRound className="size-3.5" />
+                        New password
+                      </span>
+                    </TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {employees.map((employee) => {
+                    const isProtectedMasterAdmin = employee.role === "MASTER_ADMIN" && currentRole !== "MASTER_ADMIN";
+                    const isSelf = employee.id === session.user.id;
 
-                  return (
-                    <TableRow key={employee.id}>
-                      <TableCell>
-                        <form id={`update-${employee.id}`} action={updateUser} className="grid gap-2">
-                          <input type="hidden" name="userId" value={employee.id} />
-                          <Label htmlFor={`name-${employee.id}`} className="sr-only">
-                            Name
-                          </Label>
+                    return (
+                      <TableRow key={employee.id}>
+                        {/* Name — hosts the update form */}
+                        <TableCell>
+                          <form id={`update-${employee.id}`} action={updateUser} className="grid gap-2">
+                            <input type="hidden" name="userId" value={employee.id} />
+                            <Label htmlFor={`name-${employee.id}`} className="sr-only">
+                              Name
+                            </Label>
+                            <Input
+                              id={`name-${employee.id}`}
+                              name="name"
+                              defaultValue={employee.name}
+                              disabled={isProtectedMasterAdmin}
+                              required
+                            />
+                            <div className="flex flex-wrap gap-1.5">
+                              <Badge variant={getRoleVariant(employee.role)}>{formatLabel(employee.role)}</Badge>
+                              <Badge variant={getStatusVariant(employee.status)}>{formatLabel(employee.status)}</Badge>
+                            </div>
+                          </form>
+                        </TableCell>
+
+                        {/* Email */}
+                        <TableCell>
                           <Input
-                            id={`name-${employee.id}`}
-                            name="name"
-                            defaultValue={employee.name}
+                            form={`update-${employee.id}`}
+                            name="email"
+                            type="email"
+                            defaultValue={employee.email}
                             disabled={isProtectedMasterAdmin}
                             required
                           />
-                          <div className="text-xs text-muted-foreground">{employee.email}</div>
-                          <div className="flex flex-wrap gap-1.5">
-                            <Badge variant={getRoleVariant(employee.role)}>{formatLabel(employee.role)}</Badge>
-                            <Badge variant={getStatusVariant(employee.status)}>{formatLabel(employee.status)}</Badge>
-                          </div>
-                        </form>
-                      </TableCell>
-                      <TableCell>
-                        <Input
-                          form={`update-${employee.id}`}
-                          name="phone"
-                          defaultValue={employee.phone ?? ""}
-                          disabled={isProtectedMasterAdmin}
-                          placeholder="+91..."
-                        />
-                      </TableCell>
-                      <TableCell>
-                        <select
-                          form={`update-${employee.id}`}
-                          name="role"
-                          className={cn(selectClass, "h-9")}
-                          defaultValue={employee.role}
-                          disabled={isProtectedMasterAdmin}
-                        >
-                          {currentRole === "MASTER_ADMIN" ? <option value="MASTER_ADMIN">Master Admin</option> : null}
-                          <option value="SUB_ADMIN">Sub Admin</option>
-                          <option value="EMPLOYEE">Employee</option>
-                        </select>
-                      </TableCell>
-                      <TableCell>
-                        <select
-                          form={`update-${employee.id}`}
-                          name="status"
-                          className={cn(selectClass, "h-9")}
-                          defaultValue={employee.status}
-                          disabled={isProtectedMasterAdmin}
-                        >
-                          <option value="ACTIVE">Active</option>
-                          <option value="INVITED">Invited</option>
-                          <option value="SUSPENDED">Suspended</option>
-                        </select>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button form={`update-${employee.id}`} type="submit" size="icon" variant="outline" disabled={isProtectedMasterAdmin}>
-                            <Save className="size-4" />
-                            <span className="sr-only">Save {employee.name}</span>
-                          </Button>
-                          <form action={deleteUser}>
-                            <input type="hidden" name="userId" value={employee.id} />
+                        </TableCell>
+
+                        {/* Phone */}
+                        <TableCell>
+                          <Input
+                            form={`update-${employee.id}`}
+                            name="phone"
+                            defaultValue={employee.phone ?? ""}
+                            disabled={isProtectedMasterAdmin}
+                            placeholder="+91..."
+                          />
+                        </TableCell>
+
+                        {/* Role */}
+                        <TableCell>
+                          <select
+                            form={`update-${employee.id}`}
+                            name="role"
+                            className={cn(selectClass, "h-9")}
+                            defaultValue={employee.role}
+                            disabled={isProtectedMasterAdmin}
+                          >
+                            {currentRole === "MASTER_ADMIN" ? <option value="MASTER_ADMIN">Master Admin</option> : null}
+                            <option value="SUB_ADMIN">Sub Admin</option>
+                            <option value="EMPLOYEE">Employee</option>
+                          </select>
+                        </TableCell>
+
+                        {/* Status */}
+                        <TableCell>
+                          <select
+                            form={`update-${employee.id}`}
+                            name="status"
+                            className={cn(selectClass, "h-9")}
+                            defaultValue={employee.status}
+                            disabled={isProtectedMasterAdmin}
+                          >
+                            <option value="ACTIVE">Active</option>
+                            <option value="INVITED">Invited</option>
+                            <option value="SUSPENDED">Suspended</option>
+                          </select>
+                        </TableCell>
+
+                        {/* New password (optional reset) */}
+                        <TableCell>
+                          <Input
+                            form={`update-${employee.id}`}
+                            name="newPassword"
+                            type="password"
+                            placeholder="Leave blank to keep"
+                            minLength={8}
+                            disabled={isProtectedMasterAdmin}
+                          />
+                        </TableCell>
+
+                        {/* Actions */}
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-2">
                             <Button
+                              form={`update-${employee.id}`}
                               type="submit"
                               size="icon"
-                              variant="destructive"
-                              disabled={isProtectedMasterAdmin || isSelf}
+                              variant="outline"
+                              disabled={isProtectedMasterAdmin}
+                              title="Save changes"
                             >
-                              <Trash2 className="size-4" />
-                              <span className="sr-only">Delete {employee.name}</span>
+                              <Save className="size-4" />
+                              <span className="sr-only">Save {employee.name}</span>
                             </Button>
-                          </form>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                            <form action={deleteUser}>
+                              <input type="hidden" name="userId" value={employee.id} />
+                              <Button
+                                type="submit"
+                                size="icon"
+                                variant="destructive"
+                                disabled={isProtectedMasterAdmin || isSelf}
+                                title={isSelf ? "Cannot delete your own account" : "Remove user"}
+                              >
+                                <Trash2 className="size-4" />
+                                <span className="sr-only">Delete {employee.name}</span>
+                              </Button>
+                            </form>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -117,9 +117,11 @@ function statusVariant(status: WorkJob["status"]) {
 }
 
 function useClock() {
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
+    // Set immediately so the clock appears without a full second delay
+    setNow(new Date());
     const timer = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(timer);
   }, []);
